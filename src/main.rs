@@ -5,8 +5,18 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::time::Duration;
 use sdl2::rect::Rect;
+use std::thread;
+
 
 pub fn main() {
+
+    thread::spawn(|| {
+        consumer();
+    });
+    thread::spawn(|| {
+        producer();
+    });
+
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
  
@@ -43,8 +53,8 @@ pub fn main() {
         canvas.set_draw_color(Color::RGB(255, 210, 0));
         canvas
         .fill_rect(Rect::new(player.x, player.y, player.width, player.height))
-        .unwrap_or_else(|error| {
-            panic!("{:?}", error);
+        .unwrap_or_else(|error|{
+            panic!("ERROR: {:?}", error);
         });
 
         // Capture events from keyboard
@@ -78,5 +88,41 @@ pub fn main() {
         // DRAW CANVAS ON WINDOW
         canvas.present();
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+    }
+}
+
+pub fn consumer(){
+    println!("Initialing ZeroMQ server ...");
+    let context = zmq::Context::new();
+    let responder = context.socket(zmq::REP).unwrap();
+
+    assert!(responder.bind("tcp://*:5555").is_ok());
+
+    let mut msg = zmq::Message::new();
+    loop {
+        responder.recv(&mut msg, 0).unwrap();
+        println!("## SERVER ## Message received from client = {}", msg.as_str().unwrap());
+        thread::sleep(Duration::from_millis(1000));
+        responder.send("World", 0).unwrap();
+    }
+}
+
+pub fn producer() {
+    println!("Connecting to Server...\n");
+
+    let context = zmq::Context::new();
+    let requester = context.socket(zmq::REQ).unwrap();
+
+    assert!(requester.connect("tcp://localhost:5555").is_ok());
+
+    let mut msg = zmq::Message::new();
+
+    for request_nbr in 0..10 {
+        let message = "Hello";
+        println!("## CLIENT ## Sending to server message = {}", message);
+        requester.send(message, 0).unwrap();
+
+        requester.recv(&mut msg, 0).unwrap();
+        println!("## CLIENT ## Response from server = {}\n", msg.as_str().unwrap());
     }
 }

@@ -6,17 +6,20 @@ use sdl2::keyboard::Keycode;
 use std::time::Duration;
 use sdl2::rect::Rect;
 use std::thread;
+use rustc_serialize::json;
+use std::sync::mpsc;
+use std::sync::mpsc::{Sender, Receiver};
 
 
-pub fn main() {
+#[derive(RustcDecodable, RustcEncodable, Debug)]
+pub struct Player {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32
+}
 
-    thread::spawn(|| {
-        consumer();
-    });
-    thread::spawn(|| {
-        producer();
-    });
-
+pub fn gameLoop(mut player: Player){
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
  
@@ -30,21 +33,12 @@ pub fn main() {
     // This handles the events from keyboard
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    struct Player {
-        x: i32,
-        y: i32,
-        width: u32,
-        height: u32
-    };
-    let mut player = Player {
-        x: 50,
-        y: 50,
-        width: 20,
-        height: 20
-    };
 
     // GAME LOOP
     'running: loop {
+
+       
+
         // CLEAR WINDOW EACH FRAME
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
@@ -67,18 +61,22 @@ pub fn main() {
                 Event::KeyDown { keycode: Some(Keycode::Up), ..} => {
                     println!("Up");
                     player.y -= 10;
+                    producer(&player);
                 },
                 Event::KeyDown { keycode: Some(Keycode::Down), ..} => {
                     println!("Down");
                     player.y += 10;
+                    producer(&player);
                 },
                 Event::KeyDown { keycode: Some(Keycode::Left), ..} => {
                     println!("Left");
                     player.x -= 10;
+                    producer(&player);
                 },
                 Event::KeyDown { keycode: Some(Keycode::Right), ..} => {
                     println!("Right");
                     player.x += 10;
+                    producer(&player);
                 },
                 _ => {}
             }
@@ -91,7 +89,29 @@ pub fn main() {
     }
 }
 
-pub fn consumer(){
+pub fn main() {
+
+    let (tx, rx): (Sender<Player>, Receiver<Player>) = mpsc::channel();
+    let sender = tx.clone();
+    thread::spawn(|| {
+        server(sender);
+    });
+
+    let mut player: Player = Player {
+        x: 50,
+        y: 50,
+        width: 20,
+        height: 20
+    };
+    producer(&player);
+    gameLoop(player);
+
+     // Received from 
+    let received: Player = rx.recv().unwrap();
+    println!("Got: {:?}", received);
+}
+
+pub fn server(tx: mpsc::Sender<Player>,){
     println!("Initialing ZeroMQ server ...");
     let context = zmq::Context::new();
     let responder = context.socket(zmq::REP).unwrap();
@@ -101,28 +121,30 @@ pub fn consumer(){
     let mut msg = zmq::Message::new();
     loop {
         responder.recv(&mut msg, 0).unwrap();
-        println!("## SERVER ## Message received from client = {}", msg.as_str().unwrap());
+
+        let decoded: Player = json::decode(msg.as_str().unwrap()).unwrap();
+        println!("## SERVER ## Message received from client = {:?}", decoded);
+        tx.send(decoded);
         thread::sleep(Duration::from_millis(1000));
-        responder.send("World", 0).unwrap();
+        responder.send("OK", 0).unwrap();
     }
 }
 
-pub fn producer() {
-    println!("Connecting to Server...\n");
-
-    let context = zmq::Context::new();
-    let requester = context.socket(zmq::REQ).unwrap();
-
-    assert!(requester.connect("tcp://localhost:5555").is_ok());
-
+pub fn producer(player: &Player) {
     let mut msg = zmq::Message::new();
+    let encoded = json::encode(player).unwrap();
 
-    for request_nbr in 0..10 {
-        let message = "Hello";
-        println!("## CLIENT ## Sending to server message = {}", message);
-        requester.send(message, 0).unwrap();
+    thread::spawn(move || {
+        println!("Connecting to Server...\n");
+
+        let context = zmq::Context::new();
+        let requester = context.socket(zmq::REQ).unwrap();
+
+        assert!(requester.connect("tcp://localhost:5555").is_ok());
+        println!("## CLIENT ## Sending to server message = {}", encoded);
+        requester.send(encoded.as_str(), 0).unwrap();
 
         requester.recv(&mut msg, 0).unwrap();
         println!("## CLIENT ## Response from server = {}\n", msg.as_str().unwrap());
-    }
+    });
 }

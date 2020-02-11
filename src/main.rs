@@ -19,7 +19,7 @@ pub struct Player {
     height: u32
 }
 
-pub fn gameLoop(mut player: Player){
+pub fn game_loop(mut player: Player){
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
  
@@ -36,9 +36,6 @@ pub fn gameLoop(mut player: Player){
 
     // GAME LOOP
     'running: loop {
-
-       
-
         // CLEAR WINDOW EACH FRAME
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
@@ -90,25 +87,29 @@ pub fn gameLoop(mut player: Player){
 }
 
 pub fn main() {
-
     let (tx, rx): (Sender<Player>, Receiver<Player>) = mpsc::channel();
     let sender = tx.clone();
     thread::spawn(|| {
         server(sender);
     });
 
-    let mut player: Player = Player {
+    let player: Player = Player {
         x: 50,
         y: 50,
         width: 20,
         height: 20
     };
     producer(&player);
-    gameLoop(player);
+    thread::spawn(move || {
+        game_loop(player);
+    });
 
-     // Received from 
-    let received: Player = rx.recv().unwrap();
-    println!("Got: {:?}", received);
+     // Received from thread
+    loop {
+        println!(" ");
+        let received: Player = rx.recv().unwrap();
+        println!("Receiving another thread: {:?}", received);
+    }
 }
 
 pub fn server(tx: mpsc::Sender<Player>,){
@@ -124,7 +125,7 @@ pub fn server(tx: mpsc::Sender<Player>,){
 
         let decoded: Player = json::decode(msg.as_str().unwrap()).unwrap();
         println!("## SERVER ## Message received from client = {:?}", decoded);
-        tx.send(decoded);
+        tx.send(decoded).unwrap();
         thread::sleep(Duration::from_millis(1000));
         responder.send("OK", 0).unwrap();
     }
